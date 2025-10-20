@@ -153,13 +153,13 @@ contract KipuBank {
     * @param _amount Amount of ETH (in Wei) the user wishes to withdraw.
     */
     function withdraw(uint256 _amount) external {
+        if (_amount > MAX_WITHDRAWAL) {
+            revert WithdrawalLimitExceeded(MAX_WITHDRAWAL, _amount);
+        }
+    
         address user = msg.sender;
         if (_amount > balances[user]) {
             revert InsufficientFunds(balances[user], _amount);
-        }
-
-        if (_amount > MAX_WITHDRAWAL) {
-            revert WithdrawalLimitExceeded(MAX_WITHDRAWAL, _amount);
         }
 
         unchecked {
@@ -185,7 +185,7 @@ contract KipuBank {
             revert ZeroDeposit();
         }
 
-        if (address(this).balance + amount > BANK_CAP) {
+        if (address(this).balance > BANK_CAP) {
             revert BankCapExceeded();
         }
 
