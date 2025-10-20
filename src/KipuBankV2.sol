@@ -20,7 +20,7 @@ contract KipuBank {
     /**
      * @dev Maximum limit of ETH that can be withdrawn in a single transaction.
      */
-    uint256 public immutable MAX_WITHDRAWAL = 0.5 ether;
+    uint256 public constant MAX_WITHDRAWAL = 0.5 ether;
 
     /**
      * @dev Total capacity of ETH that bank can hold (in Wei).
