@@ -199,7 +199,7 @@ contract KipuBank {
     * @return The user's balance.
     */
     function getMyBalance() public view returns (uint256) {
-        return _getUserBalance(msg.sender);
+        return balances[msg.sender];
     }
 
     /**
@@ -224,13 +224,5 @@ contract KipuBank {
     */
     function getBankCap() public view returns (uint256) {
         return BANK_CAP;
-    }
-
-    /**
-    * @dev Private function that returns a user's current balance.
-    * @return The user's ETH balance (in Wei).
-    */
-    function _getUserBalance(address _user) private view returns (uint256) {
-        return balances[_user];
     }
 }
