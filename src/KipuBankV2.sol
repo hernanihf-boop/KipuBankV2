@@ -158,12 +158,13 @@ contract KipuBank {
         }
     
         address user = msg.sender;
-        if (_amount > balances[user]) {
-            revert InsufficientFunds(balances[user], _amount);
+        uint256 userBalance = balances[user];
+        if (_amount > userBalance) {
+            revert InsufficientFunds(userBalance, _amount);
         }
 
         unchecked {
-            balances[user] -= _amount;
+            balances[user] = userBalance - _amount;
         }
         totalWithdrawals++;
         
@@ -171,7 +172,7 @@ contract KipuBank {
         if (!success) {
             revert TransferFailed();
         }
-        emit WithdrawalSuccessful(user, _amount, balances[user]);
+        emit WithdrawalSuccessful(user, _amount, userBalance);
     }
 
     /**
