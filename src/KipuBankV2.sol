@@ -163,8 +163,10 @@ contract KipuBank {
             revert InsufficientFunds(userBalance, _amount);
         }
 
+        uint256 newBalance;
         unchecked {
-            balances[user] = userBalance - _amount;
+            newBalance = userBalance - _amount;
+            balances[user] = newBalance;
         }
         totalWithdrawals++;
         
@@ -172,7 +174,7 @@ contract KipuBank {
         if (!success) {
             revert TransferFailed();
         }
-        emit WithdrawalSuccessful(user, _amount, userBalance);
+        emit WithdrawalSuccessful(user, _amount, newBalance);
     }
 
     /**
