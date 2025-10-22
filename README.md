@@ -1,6 +1,6 @@
 # KipuBankV2
 
-## ⛽ KipuBank Gas Optimization Summary
+## ⛽ Gas Optimization Summary
 
 This document details the gas optimizations implemented in the KipuBank.sol smart contract, ensuring it is a secure and highly efficient contract on the Ethereum Virtual Machine (EVM).
 
@@ -40,7 +40,7 @@ This document details the gas optimizations implemented in the KipuBank.sol smar
             Therefore, the check is performed directly on the new address(this).balance, eliminating the need to manually add + msg.value and saving gas.
 
 
-## ⚙️ KipuBank Security Optimizations Summary
+## ⚙️ Security Optimizations Summary
 
 1. Reentrancy guard 
     
