@@ -1,13 +1,15 @@
 //SPDX-License-Identifier: MIT
 pragma solidity >=0.8.4 <0.9.0;
 
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
 /**
  * @title KipuBank
  * @author Hernán Iannello
  * @notice Smart contract which allows users to deposit ETH
  * in a personal vault and withdraw them with a limit per transaction.
  */
-contract KipuBank {
+contract KipuBank is ReentrancyGuard {
     // ====================================================================
     // VARIABLES (IMMUTABLE, STATE & STORAGE)
     // ====================================================================
@@ -152,7 +154,7 @@ contract KipuBank {
     * @notice Allows the user to withdraw ETH from their personal vault.
     * @param _amount Amount of ETH (in Wei) the user wishes to withdraw.
     */
-    function withdraw(uint256 _amount) external {
+    function withdraw(uint256 _amount) external nonReentrant {
         if (_amount > MAX_WITHDRAWAL) {
             revert WithdrawalLimitExceeded(MAX_WITHDRAWAL, _amount);
         }
