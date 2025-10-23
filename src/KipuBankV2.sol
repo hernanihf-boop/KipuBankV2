@@ -292,8 +292,9 @@ contract KipuBank is ReentrancyGuard {
         uint256 newBalance;
         unchecked {
             newBalance = userBalance - _amount;
-            balances[user][_token] = userBalance - _amount;
+            balances[user][_token] = newBalance;
         }
+        totalWithdrawals[_token]++;
 
         IERC20 token = IERC20(_token);
         bool success = token.transfer(user, _amount); // TODO: Consider use SafeERC20 openzeppelin contract
@@ -312,9 +313,9 @@ contract KipuBank is ReentrancyGuard {
         uint256 _amount
     ) external onlySupportedToken(_token) {
         if (_amount == 0) revert ZeroDeposit();
-        IERC20 token = IERC20(_token);
 
         address user = msg.sender;
+        IERC20 token = IERC20(_token);
         bool success = token.transferFrom(user, address(this), _amount);
         if (!success) {
             revert TokenTransferFailed(_token);
@@ -322,6 +323,7 @@ contract KipuBank is ReentrancyGuard {
 
         uint256 newBalance = balances[user][_token] + _amount;
         balances[user][_token] = newBalance;
+        totalDeposits[_token]++;
         emit DepositSuccessful(_token, user, _amount, newBalance);
     }
 
