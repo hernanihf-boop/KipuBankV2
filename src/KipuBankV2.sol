@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /**
  * @title KipuBank
  * @author Hernán Iannello
- * @notice Smart contract which allows users to deposit ETH
+ * @notice Smart contract which allows users to deposit ERC20 token
  * in a personal vault and withdraw them with a limit per transaction.
  */
 contract KipuBank is ReentrancyGuard {
@@ -84,7 +84,7 @@ contract KipuBank is ReentrancyGuard {
     event WithdrawalSuccessful(address indexed token, address indexed user, uint256 amount, uint256 newBalance);
 
     /**
-    * @dev Emitted when a new token is supported.
+    * @dev Emitted when a new token supported is added.
     * @param token Token address.
     */
     event SupportedTokenAdded(address indexed token);
@@ -118,9 +118,10 @@ contract KipuBank is ReentrancyGuard {
     error WithdrawalLimitExceeded(uint256 limit, uint256 requested);
 
     /**
-    * @dev Emitted if the transfer of native ETH to the user fails.
+    * @dev Emitted if the token transfer fails.
+    * @param token Token the address of the token.
     */
-    error TransferFailed();
+    error TransferFailed(address token);
 
     /**
     * @dev Emitted when a function call is not made by the owner of the address.
@@ -140,12 +141,6 @@ contract KipuBank is ReentrancyGuard {
     * @param token The addres of the token.
     */
     error TokenAlreadySupported(address token);
-    
-    /**
-    * @dev Emitted when a token transfer is failed.
-    * @param token The addres of the token.
-    */
-    error TokenTransferFailed(address token);
 
     // ====================================================================
     // MODIFIERS
@@ -243,7 +238,7 @@ contract KipuBank is ReentrancyGuard {
         
         (bool success, ) = payable(user).call{value: _amount}("");
         if (!success) {
-            revert TransferFailed();
+            revert TransferFailed(ETH_TOKEN_ADDRESS);
         }
         emit WithdrawalSuccessful(ETH_TOKEN_ADDRESS, user, _amount, newBalance);
     }
@@ -298,7 +293,7 @@ contract KipuBank is ReentrancyGuard {
 
         IERC20 token = IERC20(_token);
         bool success = token.transfer(user, _amount); // TODO: Consider use SafeERC20 openzeppelin contract
-        if (!success) revert TokenTransferFailed(_token);
+        if (!success) revert TransferFailed(_token);
 
         emit WithdrawalSuccessful(_token, user, _amount, newBalance);
     }
@@ -318,7 +313,7 @@ contract KipuBank is ReentrancyGuard {
         IERC20 token = IERC20(_token);
         bool success = token.transferFrom(user, address(this), _amount);
         if (!success) {
-            revert TokenTransferFailed(_token);
+            revert TransferFailed(_token);
         }
 
         uint256 newBalance = balances[user][_token] + _amount;
