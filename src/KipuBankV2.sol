@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 
 /**
@@ -15,6 +16,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
  * in a personal vault and withdraw or hold them.
  */
 contract KipuBank is ReentrancyGuard, Ownable {
+    using SafeERC20 for IERC20;
     // ====================================================================
     // CONSTANTS & VARIABLES (IMMUTABLE, STATE & STORAGE)
     // ====================================================================
@@ -159,13 +161,6 @@ contract KipuBank is ReentrancyGuard, Ownable {
     error TransferFailed(address token);
 
     /**
-    * @dev Emitted when a function call is not made by the owner of the address.
-    * @param caller The caller of the function.
-    * @param owner The owner of the address.
-    */
-    error UnauthorizedCaller(address caller, address owner);
-
-    /**
     * @dev Emitted when a token is not supported.
     * @param token The addres of the token.
     */
@@ -277,10 +272,7 @@ contract KipuBank is ReentrancyGuard, Ownable {
         }
 
         address user = msg.sender;
-        bool success = IERC20(_token).transferFrom(user, address(this), _amount); // TODO: Consider use openzeppelin SafeERC20 contract to support more tokens
-        if (!success) {
-            revert TransferFailed(_token);
-        }
+        IERC20(_token).safeTransferFrom(user, address(this), _amount);
 
         balances[user][_token] += _amount;
         totalReserves[_token] += _amount;
@@ -340,9 +332,7 @@ contract KipuBank is ReentrancyGuard, Ownable {
         totalReserves[_token] -= _amount;
         totalWithdrawals[_token]++;
 
-        IERC20 token = IERC20(_token);
-        bool success = token.transfer(user, _amount); // TODO: Consider use openzeppelin SafeERC20 contract to support more tokens
-        if (!success) revert TransferFailed(_token);
+        IERC20(_token).safeTransfer(user, _amount);
 
         emit WithdrawalSuccessful(_token, user, _amount);
     }
@@ -362,6 +352,7 @@ contract KipuBank is ReentrancyGuard, Ownable {
     * @param _priceFeed The ERC20 price feed
     */
     function addSupportedToken(address _token, address _priceFeed) external onlyOwner {
+        if(address(_priceFeed) == address(0)) revert NotSupportedPriceFeed(address(_priceFeed));
         if (_token == ETH_TOKEN_ADDRESS || isSupportedToken[_token]) revert TokenAlreadySupported(_token);
         
         isSupportedToken[_token] = true;
