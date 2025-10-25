@@ -1,19 +1,32 @@
 //SPDX-License-Identifier: MIT
 pragma solidity >=0.8.20 <0.9.0;
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+
 
 /**
  * @title KipuBank
  * @author Hernán Iannello
- * @notice Smart contract which allows users to deposit ERC20 token
- * in a personal vault and withdraw them with a limit per transaction.
+ * @notice Smart contract which allows users to deposit ERC20 tokens
+ * in a personal vault and withdraw or hold them.
  */
 contract KipuBank is ReentrancyGuard {
     // ====================================================================
-    // VARIABLES (IMMUTABLE, STATE & STORAGE)
+    // CONSTANTS & VARIABLES (IMMUTABLE, STATE & STORAGE)
     // ====================================================================
+
+    /**
+     * @dev Maximum limit of USD that can be withdrawn in a single transaction.
+     */
+    uint256 public constant MAX_WITHDRAWAL_USD = 1000 * 1e8;
+
+    /**
+     * @dev We use the address(0) to represent ETH.
+     */
+    address private constant ETH_TOKEN_ADDRESS = address(0);
 
     /**
      * @dev Address of the contract owner. This is set during deployment.
@@ -21,18 +34,15 @@ contract KipuBank is ReentrancyGuard {
     address public immutable owner;
 
     /**
-     * @dev Maximum limit of ETH that can be withdrawn in a single transaction.
-     */
-    uint256 public constant MAX_WITHDRAWAL = 0.5 ether;
-
-    // We use address(0) to represent ETH
-    address private constant ETH_TOKEN_ADDRESS = address(0);
-
-    /**
-     * @dev Total capacity of ETH that bank can hold (in Wei).
+     * @dev Total capacity of USD that bank can hold.
      * @dev Fixed in deployment to ensure capacity.
      */
-    uint256 private immutable BANK_CAP;
+    uint256 private immutable BANK_CAP_USD;
+
+    /**
+     * @dev List of ERC20 tokens supported.
+     */
+    AggregatorV3Interface internal ethUsdPriceFeed;
 
     /**
      * @dev List of ERC20 tokens supported.
@@ -46,18 +56,33 @@ contract KipuBank is ReentrancyGuard {
     mapping(address => mapping(address => uint256)) private balances;
 
     /**
+     * @dev Mapping to tracking the tokens total deposited amount in the bank (stored in native token units).
+     */
+    mapping(address => uint256) private totalReserves;
+
+    /**
      * @dev Mapping to verify if a token is supported.
      * @dev The key is the token's address.
      */
     mapping(address => bool) private isSupportedToken;
 
     /**
-     * @dev Mapping to register number of successful deposits made.
+     * @dev Mapping to register token price feed (oracles).
+     */
+    mapping(address => AggregatorV3Interface) private tokenPriceFeeds;
+
+    /**
+     * @dev Mapping to register the decimals for a supported token.
+     */
+    mapping(address => uint8) private tokenDecimalsMap;
+
+    /**
+     * @dev Mapping to register number of successful deposits made for each token.
      */
     mapping(address => uint256) private totalDeposits;
 
     /**
-     * @dev Mapping to register number of successful withdrawals made.
+     * @dev Mapping to register number of successful withdrawals made for each token.
      */
     mapping(address => uint256) private totalWithdrawals;
 
@@ -70,24 +95,28 @@ contract KipuBank is ReentrancyGuard {
     * @param token Depositing token address.
     * @param user Depositing address.
     * @param amount Amount deposited (in Wei).
-    * @param newBalance New user balance.
     */
-    event DepositSuccessful(address indexed token, address indexed user, uint256 amount, uint256 newBalance);
+    event DepositSuccessful(address indexed token, address indexed user, uint256 amount);
 
     /**
     * @dev Emitted when a user successfully withdraws a token.
     * @param token Withdrawal token address.
     * @param user Withdrawal address.
     * @param amount Withdrawn amount (in Wei).
-    * @param newBalance New user balance.
     */
-    event WithdrawalSuccessful(address indexed token, address indexed user, uint256 amount, uint256 newBalance);
+    event WithdrawalSuccessful(address indexed token, address indexed user, uint256 amount);
 
     /**
     * @dev Emitted when a new token supported is added.
     * @param token Token address.
     */
     event SupportedTokenAdded(address indexed token);
+
+    /**
+    * @dev Emitted when a supported price feed is added.
+    * @param addr Price feed address.
+    */
+    event PriceFeedSet(address indexed addr);
 
     // ====================================================================
     // CUSTOM ERRORS
@@ -97,6 +126,11 @@ contract KipuBank is ReentrancyGuard {
      * @dev Issued when a deposit fails because the amount sent is zero.
      */
     error ZeroDeposit();
+
+     /**
+     * @dev Issued when a withdraw fails because the amount sent is zero.
+     */
+    error ZeroWithdraw();
 
     /**
      * @dev Issued when the deposit exceeds the bank's total limit (BANK_CAP).
@@ -142,6 +176,17 @@ contract KipuBank is ReentrancyGuard {
     */
     error TokenAlreadySupported(address token);
 
+    /**
+    * @dev Emitted when a price feed address is not supported.
+    * @param priceFeed The addres of the price feed.
+    */
+    error NotSupportedPriceFeed(address priceFeed);
+
+    /**
+    * @dev Emitted when a price obtained from price feed is invalid or outdated.
+    */
+    error InvalidOrOutdatedPrice();
+
     // ====================================================================
     // MODIFIERS
     // ====================================================================
@@ -155,7 +200,7 @@ contract KipuBank is ReentrancyGuard {
     }
 
     modifier onlySupportedToken(address _token) {
-        if (!isSupportedToken[_token]) {
+        if (_token != ETH_TOKEN_ADDRESS && !isSupportedToken[_token]) {
             revert UnsupportedToken(_token);
         }
         _;
@@ -167,12 +212,17 @@ contract KipuBank is ReentrancyGuard {
 
     /**
     * @dev Constructor that initializes the contract.
-    * @param _bankCap The total deposit limit the contract can accept (in ETH).
+    * @param _priceFeed the price feed address.
+    * @param _bankCapUsd The total usd limit the contract can handle/accept.
     * @notice Sets the contract owner and the global deposit limit.
     */
-    constructor(uint256 _bankCap) {
+    constructor(AggregatorV3Interface _priceFeed, uint256 _bankCapUsd) {
+        if(address(_priceFeed) == address(0)) revert NotSupportedPriceFeed(address(_priceFeed));
+        ethUsdPriceFeed = _priceFeed;
         owner = msg.sender;
-        BANK_CAP = _bankCap * 1 ether; // Converts the input (in ETH) to Wei
+        BANK_CAP_USD = _bankCapUsd * 1e8; // Use 8 decimal, consistent with Chainlink (e.g., 1000 * 1e8)
+        
+        emit PriceFeedSet(address(_priceFeed));
     }
 
     // ====================================================================
@@ -193,109 +243,25 @@ contract KipuBank is ReentrancyGuard {
     // FUNCTIONS
     // ====================================================================
 
-    /**
-    * @notice Adds a ERC20 token to the supported list.
-    * @param _token The ERC20 token address.
-    */
-    function addSupportedToken(address _token) external onlyOwner {
-        if (_token == ETH_TOKEN_ADDRESS || isSupportedToken[_token]) revert TokenAlreadySupported(_token);
-        isSupportedToken[_token] = true;
-        supportedTokens.push(_token);
-        emit SupportedTokenAdded(_token);
-    }
-
-    /**
-    * @notice Returns the ERC20 token user balance.
-    * @param _token The ERC20 token address.
-    * @return The user balance in that token.
-    */
-    function getTokenBalance(address _token) external view onlySupportedToken(_token) returns (uint256) {
-        return balances[msg.sender][_token];
-    }
-
-    /**
-    * @notice Allows the user to withdraw ETH from their personal vault.
-    * @param _amount Amount of ETH (in Wei) the user wishes to withdraw.
-    */
-    function withdraw(uint256 _amount) external nonReentrant {
-        if (_amount == 0) revert ZeroDeposit();
-        if (_amount > MAX_WITHDRAWAL) {
-            revert WithdrawalLimitExceeded(MAX_WITHDRAWAL, _amount);
-        }
-    
-        address user = msg.sender;
-        uint256 userBalance = balances[user][ETH_TOKEN_ADDRESS];
-        if (_amount > userBalance) {
-            revert InsufficientFunds(userBalance, _amount);
-        }
-
-        uint256 newBalance;
-        unchecked {
-            newBalance = userBalance - _amount;
-            balances[user][ETH_TOKEN_ADDRESS] = newBalance;
-        }
-        totalWithdrawals[ETH_TOKEN_ADDRESS]++;
-        
-        (bool success, ) = payable(user).call{value: _amount}("");
-        if (!success) {
-            revert TransferFailed(ETH_TOKEN_ADDRESS);
-        }
-        emit WithdrawalSuccessful(ETH_TOKEN_ADDRESS, user, _amount, newBalance);
-    }
-
-    /**
+     /**
     * @notice Allows any user to deposit ETH into their personal vault.
     */
     function deposit() public payable {
         uint256 amount = msg.value;
         address user = msg.sender;
 
-        if (amount == 0) {
-            revert ZeroDeposit();
-        }
+        if (amount == 0) revert ZeroDeposit();
 
-        if (address(this).balance > BANK_CAP) {
+        uint256 usdAmount = _convertEthToUsd(amount);
+        if (_calculateTotalBankValueUsd() + usdAmount > BANK_CAP_USD) {
             revert BankCapExceeded();
         }
 
         balances[user][ETH_TOKEN_ADDRESS] += amount;
+        totalReserves[ETH_TOKEN_ADDRESS] += amount;
         totalDeposits[ETH_TOKEN_ADDRESS]++;
-        emit DepositSuccessful(ETH_TOKEN_ADDRESS, user, amount, balances[user][ETH_TOKEN_ADDRESS]);
-    }
 
-    /**
-    * @notice Withdraws tokens ERC20 from users vault.
-    * @param _token ERC20 token address.
-    * @param _amount Amount to withdraw (in token units).
-    */
-    function withdrawToken(
-        address _token,
-        uint256 _amount
-    ) external onlySupportedToken(_token) nonReentrant {
-        if (_token == ETH_TOKEN_ADDRESS) return;
-        if (_amount == 0) revert ZeroDeposit();
-        if (_amount > MAX_WITHDRAWAL) {
-            revert WithdrawalLimitExceeded(MAX_WITHDRAWAL, _amount);
-        }
-
-        address user = msg.sender;
-        uint256 userBalance = balances[user][_token];
-        if (_amount > userBalance) {
-            revert InsufficientFunds(userBalance, _amount);
-        }
-
-        uint256 newBalance;
-        unchecked {
-            newBalance = userBalance - _amount;
-            balances[user][_token] = newBalance;
-        }
-        totalWithdrawals[_token]++;
-
-        IERC20 token = IERC20(_token);
-        bool success = token.transfer(user, _amount); // TODO: Consider use SafeERC20 openzeppelin contract
-        if (!success) revert TransferFailed(_token);
-
-        emit WithdrawalSuccessful(_token, user, _amount, newBalance);
+        emit DepositSuccessful(ETH_TOKEN_ADDRESS, user, amount);
     }
 
     /**
@@ -309,25 +275,132 @@ contract KipuBank is ReentrancyGuard {
     ) external onlySupportedToken(_token) {
         if (_amount == 0) revert ZeroDeposit();
 
+        (uint256 usdAmount, ) = _convertTokenToUsd(_token, _amount);
+        if (_calculateTotalBankValueUsd() + usdAmount > BANK_CAP_USD) {
+            revert BankCapExceeded();
+        }
+
         address user = msg.sender;
-        IERC20 token = IERC20(_token);
-        bool success = token.transferFrom(user, address(this), _amount);
+        bool success = IERC20(_token).transferFrom(user, address(this), _amount); // TODO: Consider use openzeppelin SafeERC20 contract to support more tokens
         if (!success) {
             revert TransferFailed(_token);
         }
 
-        uint256 newBalance = balances[user][_token] + _amount;
-        balances[user][_token] = newBalance;
+        balances[user][_token] += _amount;
+        totalReserves[_token] += _amount;
         totalDeposits[_token]++;
-        emit DepositSuccessful(_token, user, _amount, newBalance);
+
+        emit DepositSuccessful(_token, user, _amount);
+    }
+
+    /**
+    * @notice Allows the user to withdraw ETH from their personal vault.
+    * @param _amount Amount of ETH (in Wei) the user wishes to withdraw.
+    */
+    function withdraw(uint256 _amount) external nonReentrant {
+        if (_amount == 0) revert ZeroWithdraw();
+
+        uint256 usdAmount = _convertEthToUsd(_amount);
+        if (usdAmount > MAX_WITHDRAWAL_USD) revert WithdrawalLimitExceeded(MAX_WITHDRAWAL_USD, usdAmount);
+    
+        address user = msg.sender;
+        uint256 userBalance = balances[user][ETH_TOKEN_ADDRESS];
+        if (_amount > userBalance) revert InsufficientFunds(userBalance, _amount); 
+
+        unchecked {
+            balances[user][ETH_TOKEN_ADDRESS] = userBalance - _amount;
+        }
+        totalReserves[ETH_TOKEN_ADDRESS] -= _amount;
+        totalWithdrawals[ETH_TOKEN_ADDRESS]++;
+        
+        (bool success, ) = payable(user).call{value: _amount}("");
+        if (!success) revert TransferFailed(ETH_TOKEN_ADDRESS);
+
+        emit WithdrawalSuccessful(ETH_TOKEN_ADDRESS, user, _amount);
+    }
+
+    /**
+    * @notice Withdraws tokens ERC20 from users vault.
+    * @param _token ERC20 token address.
+    * @param _amount Amount to withdraw (in token units).
+    */
+    function withdrawToken(
+        address _token,
+        uint256 _amount
+    ) external onlySupportedToken(_token) nonReentrant {
+        if (_token == ETH_TOKEN_ADDRESS) return;
+        if (_amount == 0) revert ZeroWithdraw();
+
+        (uint256 usdAmount, ) = _convertTokenToUsd(_token, _amount);
+        if (usdAmount > MAX_WITHDRAWAL_USD) revert WithdrawalLimitExceeded(MAX_WITHDRAWAL_USD, usdAmount);
+
+        address user = msg.sender;
+        uint256 userBalance = balances[user][_token];
+        if (_amount > userBalance) revert InsufficientFunds(userBalance, _amount);
+
+        unchecked {
+            balances[user][_token] = userBalance - _amount;
+        }
+        totalReserves[_token] -= _amount;
+        totalWithdrawals[_token]++;
+
+        IERC20 token = IERC20(_token);
+        bool success = token.transfer(user, _amount); // TODO: Consider use openzeppelin SafeERC20 contract to support more tokens
+        if (!success) revert TransferFailed(_token);
+
+        emit WithdrawalSuccessful(_token, user, _amount);
+    }
+
+    /**
+    * @notice Adds a ERC20 token to the supported list.
+    * @param _token The ERC20 token address.
+    * @param _priceFeed The ERC20 price feed
+    */
+    function addSupportedToken(address _token, address _priceFeed) external onlyOwner {
+        if (_token == ETH_TOKEN_ADDRESS || isSupportedToken[_token]) revert TokenAlreadySupported(_token);
+        
+        isSupportedToken[_token] = true;
+        tokenPriceFeeds[_token] = AggregatorV3Interface(_priceFeed);
+        supportedTokens.push(_token);
+        tokenDecimalsMap[_token] = IERC20Metadata(_token).decimals(); 
+
+        emit SupportedTokenAdded(_token);
+    }
+
+    /**
+    * @notice Sets the price feed adress. Only allowed to owner.
+    * @param _priceFeed The price feed adress.
+    */
+    function setFeeds(address _priceFeed) external onlyOwner {
+        if(_priceFeed == address(0)) revert NotSupportedPriceFeed(address(_priceFeed));
+        ethUsdPriceFeed = AggregatorV3Interface(_priceFeed); // sepolia: 0x694AA1769357215DE4FAC081bf1f309aDC325306
+        
+        emit PriceFeedSet(_priceFeed);
+    }
+
+    /**
+    * @notice Returns the ERC20 token user balance.
+    * @param _token The ERC20 token address.
+    * @return The user balance in that token.
+    */
+    function getTokenBalance(address _token) external view onlySupportedToken(_token) returns (uint256) {
+        return balances[msg.sender][_token];
     }
 
     /**
     * @notice Returns the ETH user balance (in Wei).
     * @return The user's balance.
     */
-    function getEthBalance() public view returns (uint256) {
+    function getMyEthBalance() public view returns (uint256) {
         return balances[msg.sender][ETH_TOKEN_ADDRESS];
+    }
+
+    /**
+    * @notice Returns the maximum total ETH capacity the bank can hold.
+    * @return The contract's bank capacity (in Wei).
+    */
+    function getBankCap() public view returns (uint256) {
+        return BANK_CAP_USD;
     }
 
     /**
@@ -364,11 +437,78 @@ contract KipuBank is ReentrancyGuard {
         return totalWithdrawals[_token];
     }
 
+
     /**
-    * @notice Returns the maximum total ETH capacity the bank can hold.
-    * @return The contract's bank capacity (in Wei).
-    */
-    function getBankCap() public view returns (uint256) {
-        return BANK_CAP;
+     * @dev Calculates the current total value of all reserves in the bank (in USD, 8 decimals).
+     */
+    function _calculateTotalBankValueUsd() private view returns (uint256 currentTotalUsd) {
+        if (totalReserves[ETH_TOKEN_ADDRESS] > 0) {
+            currentTotalUsd += _convertEthToUsd(totalReserves[ETH_TOKEN_ADDRESS]);
+        }
+
+        for (uint256 i = 0; i < supportedTokens.length; i++) {
+            address token = supportedTokens[i];
+            uint256 reserve = totalReserves[token];
+            if (reserve > 0) {
+                (uint256 usdValue, ) = _convertTokenToUsd(token, reserve);
+                currentTotalUsd += usdValue;
+            }
+        }
+    }
+
+    /**
+     * @dev Obtain the ETH/USD price from price feed.
+     * @return price in USD with 8 decimals (2000e8 = $2000).
+     */
+    function _getEthUsdPrice() private view returns (uint256) {
+        (, int256 ethUsdPrice, , uint256 updatedAt, ) = ethUsdPriceFeed.latestRoundData();
+        if (ethUsdPrice <= 0 || block.timestamp - updatedAt > 21600) {
+            revert InvalidOrOutdatedPrice(); 
+        }
+        return uint256(ethUsdPrice);
+    }
+
+    /**
+     * @dev Convert an amount from ETH (18 decimals) to USD (8 decimals) using the price feed.
+     * @param ethAmount Eth amount (in wei).
+     * @return Equivalent value in USD (using 8 decimals).
+     */
+    function _convertEthToUsd(uint256 ethAmount) private view returns (uint256) {
+        uint256 ethUsdPrice = _getEthUsdPrice();
+        return (ethAmount * ethUsdPrice) / (10 ** 10);
+    }
+
+    /**
+     * @dev Get the token price and decimals from the feed.
+     * @param _token Token address.
+     * @return price the token price.
+     * @return feedDecimals the token decimals.
+     */
+    function _getTokenPriceFeedData(address _token) private view returns (uint256 price, uint8 feedDecimals) {
+        AggregatorV3Interface tokenPriceFeed = tokenPriceFeeds[_token];
+        ( , int256 tokenUsdPrice, , uint256 updatedAt, ) = tokenPriceFeed.latestRoundData();
+        if (tokenUsdPrice <= 0 || block.timestamp - updatedAt > 21600) {
+            revert InvalidOrOutdatedPrice();
+        }
+
+        feedDecimals = uint8(tokenPriceFeed.decimals());
+        price = uint256(tokenUsdPrice);
+    }
+
+    /**
+     * @dev Convert an amount from Token to USD using the price feed.
+     * @param _token Token address.
+     * @param _amount Token amount.
+     * @return usdAmount The value in USD (using 8 decimals)
+     * @return tokenDecimals The token's decimals.
+     */
+    function _convertTokenToUsd(address _token, uint256 _amount) private view returns (uint256 usdAmount, uint8 tokenDecimals) {
+        if (_token == ETH_TOKEN_ADDRESS) return (_convertEthToUsd(_amount), 18);
+
+        (uint256 tokenUsdPrice, ) = _getTokenPriceFeedData(_token);
+        tokenDecimals = tokenDecimalsMap[_token]; 
+        usdAmount = (_amount * tokenUsdPrice) / (10 ** tokenDecimals);
+        
+        return (usdAmount, tokenDecimals);
     }
 }
