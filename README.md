@@ -35,29 +35,52 @@
 ## 🛫 Step by step to deploy & test in sepolia network
 
 1. First of all we need to have a wallet with Sepolia ETH (testnet ether).
+
 2. Deploy the smart contract (KipuBankV2) in sepolia using remix or other IDE. For this we need to set the constructor params:
+    
     a. _ethUsdPriceFeed = The chainlink ETH/USD oracle addres in Sepolia (0x694AA1769357215DE4FAC081bf1f309aDC325306).
+    
     b. _bankCapUsd = The capacity bank limit in USD. E.g 10000 USD. (using 8 decimals internally, as Chainlink does)
+
 3. Now we are able to deposit or withdraw ETH, handling the bank total value in usd.
+
 4. Then we need to add a ERC20 token with the correspoding oracle to have support for other currencies. For example, we could add USDC in sepolia this way:
+    
     a. USDC (Sepolia Mock) address: 0x1c7D4B196Cb0c7B01d743Fbc6116a902BC5cf5de
+   
     b. USDC/USD price feed address: 0x773616E4d11A78F51129900264f1D27E8AbC9552
     Before wa can handle USDC, we need to interact with the USDC's contract to approve this operations calling the function approve(address spender, uint256 amount) 
+
 5. Now we can deposit this allowed ERC20 token and then withdraw them.
+
 6. All the bank public/external functions are allowed to use:
+    
     a. deposit() [eth]
+    
     b. depositToken() [allowed erc20 token]
+    
     c. withdraw() [eth]
+    
     d. withdrawToken() [allowed erc20 token]
+    
     e. getTotalBankValueUsd() [onlyOwner] [usd]
+    
     f. addSupportedToken()
+    
     g. setEthPriceFeed()
+    
     h. getTokenBalance()
+    
     i. getEthBalance()
+    
     j. getBankCap()
+    
     k. getTotalEthDeposits()
+    
     l. getTotalEthWithdrawals()
+    
     m. getTotalTokenDeposits()
+    
     n. getTotalTokenWithdrawals()
 
 
