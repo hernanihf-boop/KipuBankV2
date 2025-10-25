@@ -30,20 +30,10 @@ contract KipuBank is ReentrancyGuard, Ownable {
     address private constant ETH_TOKEN_ADDRESS = address(0);
 
     /**
-     * @dev Address of the contract owner. This is set during deployment.
-     */
-    address public immutable owner;
-
-    /**
      * @dev Total capacity of USD that bank can hold.
      * @dev Fixed in deployment to ensure capacity.
      */
     uint256 private immutable BANK_CAP_USD;
-
-    /**
-     * @dev List of ERC20 tokens supported.
-     */
-    AggregatorV3Interface internal ethUsdPriceFeed;
 
     /**
      * @dev List of ERC20 tokens supported.
@@ -139,6 +129,11 @@ contract KipuBank is ReentrancyGuard, Ownable {
     error BankCapExceeded();
 
     /**
+     * @dev Issued when set the bank cap at deployment time if the value is not supported.
+     */
+    error InvalidBankCapValue();
+
+    /**
     * @dev Emitted when the user attempts to withdraw more than they have in their vault.
     * @param requested Requested.
     * @param available Total available in the vault.
@@ -205,17 +200,20 @@ contract KipuBank is ReentrancyGuard, Ownable {
 
     /**
     * @dev Constructor that initializes the contract.
-    * @param _priceFeed the price feed address.
+    * @param _ethUsdPriceFeed the price feed address.
     * @param _bankCapUsd The total usd limit the contract can handle/accept.
     * @notice Sets the contract owner and the global deposit limit.
     */
-    constructor(AggregatorV3Interface _priceFeed, uint256 _bankCapUsd) Ownable(msg.sender) {
-        if(address(_priceFeed) == address(0)) revert NotSupportedPriceFeed(address(_priceFeed));
-        ethUsdPriceFeed = _priceFeed;
-        owner = msg.sender;
+    constructor(AggregatorV3Interface _ethUsdPriceFeed, uint256 _bankCapUsd) Ownable(msg.sender) {
+        if(address(_ethUsdPriceFeed) == address(0)) revert NotSupportedPriceFeed(address(_ethUsdPriceFeed));
+        if (_bankCapUsd == 0) revert InvalidBankCapValue();
+
+        isSupportedToken[ETH_TOKEN_ADDRESS] = true;
+        tokenPriceFeeds[ETH_TOKEN_ADDRESS] = AggregatorV3Interface(_ethUsdPriceFeed);
+        tokenDecimalsMap[ETH_TOKEN_ADDRESS] = 18;
         BANK_CAP_USD = _bankCapUsd * 1e8; // Use 8 decimal, consistent with Chainlink (e.g., 1000 * 1e8)
         
-        emit PriceFeedSet(address(_priceFeed));
+        emit PriceFeedSet(address(_ethUsdPriceFeed));
     }
 
     // ====================================================================
@@ -373,9 +371,9 @@ contract KipuBank is ReentrancyGuard, Ownable {
     * @notice Sets the price feed adress. Only allowed to owner.
     * @param _priceFeed The price feed adress.
     */
-    function setFeeds(address _priceFeed) external onlyOwner {
+    function setEthPriceFeed(address _priceFeed) external onlyOwner {
         if(_priceFeed == address(0)) revert NotSupportedPriceFeed(address(_priceFeed));
-        ethUsdPriceFeed = AggregatorV3Interface(_priceFeed); // sepolia: 0x694AA1769357215DE4FAC081bf1f309aDC325306
+        tokenPriceFeeds[ETH_TOKEN_ADDRESS] = AggregatorV3Interface(_priceFeed); // sepolia: 0x694AA1769357215DE4FAC081bf1f309aDC325306
         
         emit PriceFeedSet(_priceFeed);
     }
@@ -463,7 +461,7 @@ contract KipuBank is ReentrancyGuard, Ownable {
      * @return price in USD with 8 decimals (2000e8 = $2000).
      */
     function _getEthUsdPrice() private view returns (uint256) {
-        (, int256 ethUsdPrice, , uint256 updatedAt, ) = ethUsdPriceFeed.latestRoundData();
+        (, int256 ethUsdPrice, , uint256 updatedAt, ) = tokenPriceFeeds[ETH_TOKEN_ADDRESS].latestRoundData();
         if (ethUsdPrice <= 0 || block.timestamp - updatedAt > 21600) {
             revert InvalidOrOutdatedPrice(); 
         }
