@@ -44,16 +44,15 @@
 
 3. Now we are able to deposit or withdraw ETH, handling the bank total value in usd.
 
-4. Then we need to add a ERC20 token with the correspoding oracle to have support for other currencies. For example, we could add USDC in sepolia this way:
+4. Then we need to add a ERC20 token with the correspoding oracle to have support for other currencies.  We can deploy custom ERC20 token mocks or, for example, we could add USDC in sepolia this way:
     
-    a. USDC (Sepolia Mock) address: 0x1c7D4B196Cb0c7B01d743Fbc6116a902BC5cf5de
+    a. USDC (My Sepolia Mock) address: 0x1c7D4B196Cb0c7B01d743Fbc6116a902BC5cf5de
    
     b. USDC/USD price feed address: 0x773616E4d11A78F51129900264f1D27E8AbC9552
-    Before wa can handle USDC, we need to interact with the USDC's contract to approve this operations calling the function approve(address spender, uint256 amount) 
+    
+5. Call the addSupportedToken, and now we can deposit this allowed ERC20 token and then withdraw.
 
-5. Now we can deposit this allowed ERC20 token and then withdraw them.
-
-6. All the bank public/external functions are allowed to use:
+6. Now all the bank public/external functions are allowed to use:
     
     a. deposit() [eth]
     
