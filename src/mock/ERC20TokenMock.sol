@@ -12,16 +12,19 @@ import {SafeMath} from "@openzeppelin/contracts/utils/math/SafeMath.sol";
 contract ERC20Mock is ERC20 {
     using SafeMath for uint256;
 
-    string private constant TOKEN_NAME = "MockedToken";
-    string private constant TOKEN_SYMBOL = "MTOK";
-    uint8 private constant TOKEN_DECIMALS = 18;
+    uint8 private constant TOKEN_DECIMAL = 18;
+
+    string public tokenName;
+    string public tokenSymbol;
 
     /**
      * @notice Constructor.
      * @dev Starts the token with name, symbol and mint an intial quantity to the deployment account.
      */
-    constructor() ERC20(TOKEN_NAME, TOKEN_SYMBOL) {
-        _mint(msg.sender, 1000000 * (10 ** TOKEN_DECIMALS));
+    constructor(string memory _tokenName, string memory _tokenSymbol) ERC20(_tokenName, _tokenSymbol) {
+        tokenName = _tokenName;
+        tokenSymbol = _tokenSymbol;
+        _mint(msg.sender, 1000000 * (10 ** TOKEN_DECIMAL));
     }
 
     /**
@@ -35,6 +38,6 @@ contract ERC20Mock is ERC20 {
     }
 
     function decimals() public pure override returns (uint8) {
-        return TOKEN_DECIMALS;
+        return TOKEN_DECIMAL;
     }
 }
