@@ -25,6 +25,11 @@ contract KipuBank is ReentrancyGuard, Ownable {
     uint256 public constant MAX_WITHDRAWAL_USD = 1000 * 1e8;
 
     /**
+     * @dev Maximum amount of time to consider an outdated price feed.
+     */
+    uint256 private constant MAX_PRICE_FEED_AGE = 1800; // 30 min.
+
+    /**
      * @dev We use the address(0) to represent ETH.
      */
     address private constant ETH_TOKEN_ADDRESS = address(0);
@@ -462,7 +467,7 @@ contract KipuBank is ReentrancyGuard, Ownable {
      */
     function _getEthUsdPrice() private view returns (uint256) {
         (, int256 ethUsdPrice, , uint256 updatedAt, ) = tokenPriceFeeds[ETH_TOKEN_ADDRESS].latestRoundData();
-        if (ethUsdPrice <= 0 || block.timestamp - updatedAt > 21600) {
+        if (ethUsdPrice <= 0 || block.timestamp - updatedAt > MAX_PRICE_FEED_AGE) {
             revert InvalidOrOutdatedPrice(); 
         }
         return uint256(ethUsdPrice);
@@ -487,7 +492,7 @@ contract KipuBank is ReentrancyGuard, Ownable {
     function _getTokenPriceFeedData(address _token) private view returns (uint256 price, uint8 feedDecimals) {
         AggregatorV3Interface tokenPriceFeed = tokenPriceFeeds[_token];
         ( , int256 tokenUsdPrice, , uint256 updatedAt, ) = tokenPriceFeed.latestRoundData();
-        if (tokenUsdPrice <= 0 || block.timestamp - updatedAt > 21600) {
+        if (tokenUsdPrice <= 0 || block.timestamp - updatedAt > MAX_PRICE_FEED_AGE) {
             revert InvalidOrOutdatedPrice();
         }
 
