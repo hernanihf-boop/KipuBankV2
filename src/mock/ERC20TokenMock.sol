@@ -14,8 +14,8 @@ contract ERC20Mock is ERC20 {
 
     uint8 private constant TOKEN_DECIMAL = 18;
 
-    string public tokenName;
-    string public tokenSymbol;
+    string private tokenName;
+    string private  tokenSymbol;
 
     /**
      * @notice Constructor.

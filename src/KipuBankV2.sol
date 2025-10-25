@@ -5,6 +5,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 
 /**
@@ -13,7 +14,7 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/Ag
  * @notice Smart contract which allows users to deposit ERC20 tokens
  * in a personal vault and withdraw or hold them.
  */
-contract KipuBank is ReentrancyGuard {
+contract KipuBank is ReentrancyGuard, Ownable {
     // ====================================================================
     // CONSTANTS & VARIABLES (IMMUTABLE, STATE & STORAGE)
     // ====================================================================
@@ -191,14 +192,6 @@ contract KipuBank is ReentrancyGuard {
     // MODIFIERS
     // ====================================================================
 
-    /**
-     * @dev Modifier to validate that only the owner can call the function.
-     */
-    modifier onlyOwner() {
-      if (msg.sender != owner) revert UnauthorizedCaller(msg.sender, owner);
-      _;
-    }
-
     modifier onlySupportedToken(address _token) {
         if (_token != ETH_TOKEN_ADDRESS && !isSupportedToken[_token]) {
             revert UnsupportedToken(_token);
@@ -216,7 +209,7 @@ contract KipuBank is ReentrancyGuard {
     * @param _bankCapUsd The total usd limit the contract can handle/accept.
     * @notice Sets the contract owner and the global deposit limit.
     */
-    constructor(AggregatorV3Interface _priceFeed, uint256 _bankCapUsd) {
+    constructor(AggregatorV3Interface _priceFeed, uint256 _bankCapUsd) Ownable(msg.sender) {
         if(address(_priceFeed) == address(0)) revert NotSupportedPriceFeed(address(_priceFeed));
         ethUsdPriceFeed = _priceFeed;
         owner = msg.sender;
@@ -352,6 +345,15 @@ contract KipuBank is ReentrancyGuard {
     }
 
     /**
+     * @notice Retrieves the total value of the reserves in USD.
+     * @dev Only owner function. 
+     * @return The total value of the bank vault/reserves in USD (using 8 decimals).
+     */
+    function getTotalBankValueUsd() external view onlyOwner returns (uint256) {
+        return _calculateTotalBankValueUsd(); 
+    }
+
+    /**
     * @notice Adds a ERC20 token to the supported list.
     * @param _token The ERC20 token address.
     * @param _priceFeed The ERC20 price feed
@@ -391,7 +393,7 @@ contract KipuBank is ReentrancyGuard {
     * @notice Returns the ETH user balance (in Wei).
     * @return The user's balance.
     */
-    function getMyEthBalance() public view returns (uint256) {
+    function getEthBalance() public view returns (uint256) {
         return balances[msg.sender][ETH_TOKEN_ADDRESS];
     }
 
@@ -404,18 +406,18 @@ contract KipuBank is ReentrancyGuard {
     }
 
     /**
-    * @notice Returns the total number of deposits that have been made.
+    * @notice Returns the total number of eth deposits that have been made.
     * @return The total deposit count.
     */
-    function getTotalDeposits() public view returns (uint256) {
+    function getTotalEthDeposits() public view returns (uint256) {
         return totalDeposits[ETH_TOKEN_ADDRESS];
     }
 
     /**
-    * @notice Returns the total number of withdrawals that have been made.
+    * @notice Returns the total number of eth withdrawals that have been made.
     * @return The total withdrawal count.
     */
-    function getTotalWithdrawals() public view returns (uint256) {
+    function getTotalEthWithdrawals() public view returns (uint256) {
         return totalWithdrawals[ETH_TOKEN_ADDRESS];
     }
 
