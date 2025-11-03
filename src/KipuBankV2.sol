@@ -43,6 +43,11 @@ contract KipuBank is ReentrancyGuard, Ownable {
     uint256 private immutable BANK_CAP_USD;
 
     /**
+     * @dev Tracks the current total value of all reserves in USD (8 decimals).
+     */
+    uint256 private currentBankValueUsd; 
+
+    /**
      * @dev List of ERC20 tokens supported.
      */
     address[] public supportedTokens;
@@ -234,23 +239,26 @@ contract KipuBank is ReentrancyGuard, Ownable {
     // FUNCTIONS
     // ====================================================================
 
-     /**
+    /**
     * @notice Allows any user to deposit ETH into their personal vault.
     */
-    function deposit() public payable {
+    function deposit() public payable nonReentrant {
         uint256 amount = msg.value;
         address user = msg.sender;
 
         if (amount == 0) revert ZeroDeposit();
 
         uint256 usdAmount = _convertEthToUsd(amount);
-        if (_calculateTotalBankValueUsd() + usdAmount > BANK_CAP_USD) {
+        
+        if (currentBankValueUsd + usdAmount > BANK_CAP_USD) {
             revert BankCapExceeded();
         }
 
         balances[user][ETH_TOKEN_ADDRESS] += amount;
         totalReserves[ETH_TOKEN_ADDRESS] += amount;
         totalDeposits[ETH_TOKEN_ADDRESS]++;
+        
+        currentBankValueUsd += usdAmount;
 
         emit DepositSuccessful(ETH_TOKEN_ADDRESS, user, amount);
     }
@@ -263,11 +271,12 @@ contract KipuBank is ReentrancyGuard, Ownable {
     function depositToken(
         address _token,
         uint256 _amount
-    ) external onlySupportedToken(_token) {
+    ) external onlySupportedToken(_token) nonReentrant {
         if (_amount == 0) revert ZeroDeposit();
 
         (uint256 usdAmount, ) = _convertTokenToUsd(_token, _amount);
-        if (_calculateTotalBankValueUsd() + usdAmount > BANK_CAP_USD) {
+        
+        if (currentBankValueUsd + usdAmount > BANK_CAP_USD) {
             revert BankCapExceeded();
         }
 
@@ -277,6 +286,8 @@ contract KipuBank is ReentrancyGuard, Ownable {
         balances[user][_token] += _amount;
         totalReserves[_token] += _amount;
         totalDeposits[_token]++;
+        
+        currentBankValueUsd += usdAmount;
 
         emit DepositSuccessful(_token, user, _amount);
     }
@@ -301,6 +312,8 @@ contract KipuBank is ReentrancyGuard, Ownable {
         totalReserves[ETH_TOKEN_ADDRESS] -= _amount;
         totalWithdrawals[ETH_TOKEN_ADDRESS]++;
         
+        currentBankValueUsd -= usdAmount;
+
         (bool success, ) = payable(user).call{value: _amount}("");
         if (!success) revert TransferFailed(ETH_TOKEN_ADDRESS);
 
@@ -331,6 +344,8 @@ contract KipuBank is ReentrancyGuard, Ownable {
         }
         totalReserves[_token] -= _amount;
         totalWithdrawals[_token]++;
+        
+        currentBankValueUsd -= usdAmount;
 
         IERC20(_token).safeTransfer(user, _amount);
 
@@ -343,7 +358,7 @@ contract KipuBank is ReentrancyGuard, Ownable {
      * @return The total value of the bank vault/reserves in USD (using 8 decimals).
      */
     function getTotalBankValueUsd() external view onlyOwner returns (uint256) {
-        return _calculateTotalBankValueUsd(); 
+        return currentBankValueUsd; 
     }
 
     /**
@@ -433,25 +448,6 @@ contract KipuBank is ReentrancyGuard, Ownable {
         return totalWithdrawals[_token];
     }
 
-
-    /**
-     * @dev Calculates the current total value of all reserves in the bank (in USD, 8 decimals).
-     */
-    function _calculateTotalBankValueUsd() private view returns (uint256 currentTotalUsd) {
-        if (totalReserves[ETH_TOKEN_ADDRESS] > 0) {
-            currentTotalUsd += _convertEthToUsd(totalReserves[ETH_TOKEN_ADDRESS]);
-        }
-
-        for (uint256 i = 0; i < supportedTokens.length; i++) {
-            address token = supportedTokens[i];
-            uint256 reserve = totalReserves[token];
-            if (reserve > 0) {
-                (uint256 usdValue, ) = _convertTokenToUsd(token, reserve);
-                currentTotalUsd += usdValue;
-            }
-        }
-    }
-
     /**
      * @dev Obtain the ETH/USD price from price feed.
      * @return price in USD with 8 decimals (2000e8 = $2000).
@@ -471,23 +467,21 @@ contract KipuBank is ReentrancyGuard, Ownable {
      */
     function _convertEthToUsd(uint256 ethAmount) private view returns (uint256) {
         uint256 ethUsdPrice = _getEthUsdPrice();
-        return (ethAmount * ethUsdPrice) / (10 ** 10);
+        return (ethAmount * ethUsdPrice) / (10 ** 18);
     }
 
     /**
-     * @dev Get the token price and decimals from the feed.
+     * @dev Get the token price from the feed.
      * @param _token Token address.
-     * @return price the token price.
-     * @return feedDecimals the token decimals.
+     * @return price The token price (assumed 8 decimals for USD feed).
      */
-    function _getTokenPriceFeedData(address _token) private view returns (uint256 price, uint8 feedDecimals) {
+    function _getTokenPriceFeedData(address _token) private view returns (uint256 price) {
         AggregatorV3Interface tokenPriceFeed = tokenPriceFeeds[_token];
         ( , int256 tokenUsdPrice, , uint256 updatedAt, ) = tokenPriceFeed.latestRoundData();
         if (tokenUsdPrice <= 0 || block.timestamp - updatedAt > MAX_PRICE_FEED_AGE) {
             revert InvalidOrOutdatedPrice();
         }
 
-        feedDecimals = uint8(tokenPriceFeed.decimals());
         price = uint256(tokenUsdPrice);
     }
 
@@ -496,13 +490,13 @@ contract KipuBank is ReentrancyGuard, Ownable {
      * @param _token Token address.
      * @param _amount Token amount.
      * @return usdAmount The value in USD (using 8 decimals)
-     * @return tokenDecimals The token's decimals.
+     * @return tokenDecimals The token's decimals (read from storage).
      */
     function _convertTokenToUsd(address _token, uint256 _amount) private view returns (uint256 usdAmount, uint8 tokenDecimals) {
         if (_token == ETH_TOKEN_ADDRESS) return (_convertEthToUsd(_amount), 18);
 
-        (uint256 tokenUsdPrice, ) = _getTokenPriceFeedData(_token);
-        tokenDecimals = tokenDecimalsMap[_token]; 
+        uint256 tokenUsdPrice = _getTokenPriceFeedData(_token);
+        tokenDecimals = tokenDecimalsMap[_token];
         usdAmount = (_amount * tokenUsdPrice) / (10 ** tokenDecimals);
         
         return (usdAmount, tokenDecimals);
