@@ -308,12 +308,12 @@ contract KipuBank is ReentrancyGuard, Ownable {
 
         unchecked {
             balances[user][ETH_TOKEN_ADDRESS] = userBalance - _amount;
+            totalReserves[ETH_TOKEN_ADDRESS] -= _amount;
+            currentBankValueUsd -= usdAmount;
         }
-        totalReserves[ETH_TOKEN_ADDRESS] -= _amount;
+        
         totalWithdrawals[ETH_TOKEN_ADDRESS]++;
         
-        currentBankValueUsd -= usdAmount;
-
         (bool success, ) = payable(user).call{value: _amount}("");
         if (!success) revert TransferFailed(ETH_TOKEN_ADDRESS);
 
