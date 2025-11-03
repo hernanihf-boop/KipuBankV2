@@ -293,31 +293,45 @@ contract KipuBank is ReentrancyGuard, Ownable {
     }
 
     /**
+     * @dev Internal function to handle shared withdrawal logic (Checks, Effects, Statistics, and Event)
+     * for both ETH and ERC20 tokens. This centralizes the core logic for security and gas efficiency.
+     * @param _token Token address.
+     * @param _amount Amount to withdraw.
+     */
+    function _withdraw(address _token, uint256 _amount) internal {
+        if (_amount == 0) revert ZeroWithdraw();
+
+        uint256 usdAmount;
+        if (_token == ETH_TOKEN_ADDRESS) {
+            usdAmount = _convertEthToUsd(_amount);
+        } else {
+            (usdAmount,) = _convertTokenToUsd(_token, _amount);
+        }
+
+        if (usdAmount > MAX_WITHDRAWAL_USD) revert WithdrawalLimitExceeded(MAX_WITHDRAWAL_USD, usdAmount);
+
+        uint256 userBalance = balances[msg.sender][_token];
+        if (_amount > userBalance) revert InsufficientFunds(userBalance, _amount);
+
+        unchecked {
+            balances[msg.sender][_token] = userBalance - _amount;
+            totalReserves[_token] -= _amount;
+            currentBankValueUsd -= usdAmount;
+        }
+
+        totalWithdrawals[_token]++;
+    }
+
+    /**
     * @notice Allows the user to withdraw ETH from their personal vault.
     * @param _amount Amount of ETH (in Wei) the user wishes to withdraw.
     */
     function withdraw(uint256 _amount) external nonReentrant {
-        if (_amount == 0) revert ZeroWithdraw();
-
-        uint256 usdAmount = _convertEthToUsd(_amount);
-        if (usdAmount > MAX_WITHDRAWAL_USD) revert WithdrawalLimitExceeded(MAX_WITHDRAWAL_USD, usdAmount);
-    
-        address user = msg.sender;
-        uint256 userBalance = balances[user][ETH_TOKEN_ADDRESS];
-        if (_amount > userBalance) revert InsufficientFunds(userBalance, _amount); 
-
-        unchecked {
-            balances[user][ETH_TOKEN_ADDRESS] = userBalance - _amount;
-            totalReserves[ETH_TOKEN_ADDRESS] -= _amount;
-            currentBankValueUsd -= usdAmount;
-        }
-        
-        totalWithdrawals[ETH_TOKEN_ADDRESS]++;
-        
-        (bool success, ) = payable(user).call{value: _amount}("");
+        _withdraw(ETH_TOKEN_ADDRESS, _amount);
+        (bool success, ) = payable(msg.sender).call{value: _amount}("");
         if (!success) revert TransferFailed(ETH_TOKEN_ADDRESS);
 
-        emit WithdrawalSuccessful(ETH_TOKEN_ADDRESS, user, _amount);
+        emit WithdrawalSuccessful(ETH_TOKEN_ADDRESS, msg.sender, _amount);
     }
 
     /**
@@ -330,26 +344,11 @@ contract KipuBank is ReentrancyGuard, Ownable {
         uint256 _amount
     ) external onlySupportedToken(_token) nonReentrant {
         if (_token == ETH_TOKEN_ADDRESS) return;
-        if (_amount == 0) revert ZeroWithdraw();
 
-        (uint256 usdAmount, ) = _convertTokenToUsd(_token, _amount);
-        if (usdAmount > MAX_WITHDRAWAL_USD) revert WithdrawalLimitExceeded(MAX_WITHDRAWAL_USD, usdAmount);
+        _withdraw(_token, _amount);
+        IERC20(_token).safeTransfer(msg.sender, _amount);
 
-        address user = msg.sender;
-        uint256 userBalance = balances[user][_token];
-        if (_amount > userBalance) revert InsufficientFunds(userBalance, _amount);
-
-        unchecked {
-            balances[user][_token] = userBalance - _amount;
-        }
-        totalReserves[_token] -= _amount;
-        totalWithdrawals[_token]++;
-        
-        currentBankValueUsd -= usdAmount;
-
-        IERC20(_token).safeTransfer(user, _amount);
-
-        emit WithdrawalSuccessful(_token, user, _amount);
+        emit WithdrawalSuccessful(_token, msg.sender, _amount);
     }
 
     /**
